@@ -1,9 +1,20 @@
 package cache
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type cachedElement struct {
-	value interface{}
+	value      interface{}
+	expiration *time.Time
+}
+
+func (e *cachedElement) Expired() bool {
+	if e.expiration == nil || e.expiration.After(time.Now()) {
+		return false
+	}
+	return true
 }
 
 type cacheGetterFunc func(string) interface{}
@@ -24,16 +35,47 @@ type Cache struct {
 	cacheQueueMutex sync.RWMutex
 
 	getter cacheGetterFunc
+
+	expiration time.Duration
+}
+
+func (c *Cache) cleanup(interval time.Duration) {
+
+	ticker := time.Tick(interval)
+
+	for {
+		select {
+		case <-ticker:
+			// Do cleanup
+			c.cacheMutex.Lock()
+			for k, v := range c.cache {
+				if v.Expired() {
+					delete(c.cache, k)
+				}
+			}
+			c.cacheMutex.Unlock()
+		}
+	}
 }
 
 // NewCache returns a new Cache with getter f.
 // f will be called to fetch cache-missing data.
-func NewCache(f cacheGetterFunc) *Cache {
-	return &Cache{
+// If expiration interval is non null, data will
+// be refreshed if too old.
+func NewCache(f cacheGetterFunc, expiration time.Duration, cleanup time.Duration) *Cache {
+
+	c := Cache{
 		cache:      make(map[string]*cachedElement),
 		cacheQueue: make(map[string]chan bool),
 		getter:     f,
+		expiration: expiration,
 	}
+
+	if cleanup != 0 {
+		go c.cleanup(cleanup)
+	}
+
+	return &c
 }
 
 // Get retrieve a data from the cache which is associated
@@ -44,7 +86,7 @@ func (c *Cache) Get(key string) interface{} {
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
-	if v, ok := c.cache[key]; ok {
+	if v, ok := c.cache[key]; ok && !v.Expired() {
 		// Result found in cache, return it
 		c.cacheMutex.RUnlock()
 		return v.value
@@ -85,7 +127,12 @@ func (c *Cache) Get(key string) interface{} {
 
 	// Store result
 	c.cacheMutex.Lock()
-	c.cache[key] = &cachedElement{value: result}
+	e := cachedElement{value: result}
+	if c.expiration != 0 {
+		expi := time.Now().Add(c.expiration)
+		e.expiration = &expi
+	}
+	c.cache[key] = &e
 	c.cacheMutex.Unlock()
 
 	// Clean cacheQueue
