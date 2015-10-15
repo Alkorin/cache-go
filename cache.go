@@ -17,7 +17,7 @@ func (e *cachedElement) Expired() bool {
 	return true
 }
 
-type cacheGetterFunc func(string) interface{}
+type cacheGetterFunc func(interface{}) interface{}
 
 // Cache implements a thread-safe cache where
 // getting the real data is expensive.
@@ -82,7 +82,7 @@ func NewCache(f cacheGetterFunc, expiration time.Duration, cleanup time.Duration
 // to the key 'key'. If data is missing in cache, the
 // getter will be called to obtain it and store it in
 // the cache
-func (c *Cache) Get(key string) interface{} {
+func (c *Cache) Get(key string, data interface{}) interface{} {
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
@@ -123,7 +123,7 @@ func (c *Cache) Get(key string) interface{} {
 	c.cacheQueueMutex.Unlock()
 
 	// Do Real Call which may be time consuming
-	result := c.getter(key)
+	result := c.getter(data)
 
 	// Store result
 	c.cacheMutex.Lock()
