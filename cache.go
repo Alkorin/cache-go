@@ -7,6 +7,7 @@ import (
 
 type cachedElement struct {
 	value      interface{}
+	error      error
 	expiration *time.Time
 }
 
@@ -17,7 +18,7 @@ func (e *cachedElement) Expired() bool {
 	return true
 }
 
-type cacheGetterFunc func(interface{}) interface{}
+type cacheGetterFunc func(interface{}) (interface{}, error)
 
 // Cache implements a thread-safe cache where
 // getting the real data is expensive.
@@ -82,14 +83,14 @@ func NewCache(f cacheGetterFunc, expiration time.Duration, cleanup time.Duration
 // to the key 'key'. If data is missing in cache, the
 // getter will be called to obtain it and store it in
 // the cache
-func (c *Cache) Get(key string, data interface{}) interface{} {
+func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
-	if v, ok := c.cache[key]; ok && !v.Expired() {
+	if v, ok := c.cache[key]; ok && v.error == nil && !v.Expired() {
 		// Result found in cache, return it
 		c.cacheMutex.RUnlock()
-		return v.value
+		return v.value, nil
 	}
 
 	// Result was not found in cache, let see is someone
@@ -110,7 +111,7 @@ func (c *Cache) Get(key string, data interface{}) interface{} {
 		c.cacheMutex.RLock()
 		v := c.cache[key]
 		c.cacheMutex.RUnlock()
-		return v.value
+		return v.value, v.error
 	}
 
 	// Nobody is fetching this key, so we will insert
@@ -123,11 +124,11 @@ func (c *Cache) Get(key string, data interface{}) interface{} {
 	c.cacheQueueMutex.Unlock()
 
 	// Do Real Call which may be time consuming
-	result := c.getter(data)
+	result, err := c.getter(data)
 
-	// Store result
+	// Store result if callee said it's ok
 	c.cacheMutex.Lock()
-	e := cachedElement{value: result}
+	e := cachedElement{value: result, error: err}
 	if c.expiration != 0 {
 		expi := time.Now().Add(c.expiration)
 		e.expiration = &expi
@@ -144,5 +145,5 @@ func (c *Cache) Get(key string, data interface{}) interface{} {
 	close(wait)
 
 	// Return result
-	return result
+	return result, err
 }
