@@ -124,7 +124,15 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	c.cacheQueueMutex.Unlock()
 
 	// Do Real Call which may be time consuming
-	result, err := c.getter(data)
+	result, err := func(in interface{}) (out interface{}, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = r.(error)
+			}
+		}()
+
+		return c.getter(in)
+	}(data)
 
 	// Store result if callee said it's ok
 	c.cacheMutex.Lock()
