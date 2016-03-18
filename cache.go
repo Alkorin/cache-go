@@ -6,9 +6,9 @@ import (
 )
 
 type CachedElement struct {
-	value     interface{}
-	error     error
-	timestamp time.Time
+	Value     interface{}
+	Error     error
+	Timestamp time.Time
 }
 
 type CachingStrategy interface {
@@ -33,7 +33,7 @@ func (cs *DefaultCachingStrategy) CleanupTick() time.Duration {
 
 func (cs *DefaultCachingStrategy) IsExpired(e *CachedElement) bool {
 	if cs.expiration != 0 {
-		return time.Since(e.timestamp) >= cs.expiration
+		return time.Since(e.Timestamp) >= cs.expiration
 	}
 	return false
 }
@@ -43,7 +43,7 @@ func (cs *DefaultCachingStrategy) IsCleanable(e *CachedElement) bool {
 }
 
 func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, err error) *CachedElement {
-	return &CachedElement{value: v, error: err, timestamp: time.Now()}
+	return &CachedElement{Value: v, Error: err, Timestamp: time.Now()}
 }
 
 type cacheGetterFunc func(interface{}) (interface{}, error)
@@ -124,11 +124,11 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
-	if v, ok := c.cache[key]; ok && v.error == nil {
+	if v, ok := c.cache[key]; ok && v.Error == nil {
 		if !c.strategy.IsExpired(v) {
 			// Result found in cache, return it
 			c.cacheMutex.RUnlock()
-			return v.value, nil
+			return v.Value, nil
 		}
 		old = v
 	}
@@ -151,7 +151,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 		c.cacheMutex.RLock()
 		v := c.cache[key]
 		c.cacheMutex.RUnlock()
-		return v.value, v.error
+		return v.Value, v.Error
 	}
 
 	// Nobody is fetching this key, so we will insert
@@ -179,10 +179,10 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	e := c.strategy.NewCachedElement(old, result, err)
 	// Protect against faulty strategy components
 	if e == nil {
-		e = &CachedElement{value: result, error: err, timestamp: time.Now()}
+		e = &CachedElement{Value: result, Error: err, Timestamp: time.Now()}
 	}
-	result = e.value
-	err = e.error
+	result = e.Value
+	err = e.Error
 	c.cache[key] = e
 	c.cacheMutex.Unlock()
 
