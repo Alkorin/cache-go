@@ -5,17 +5,45 @@ import (
 	"time"
 )
 
-type cachedElement struct {
-	value      interface{}
-	error      error
-	expiration *time.Time
+type CachedElement struct {
+	value     interface{}
+	error     error
+	timestamp time.Time
 }
 
-func (e *cachedElement) Expired() bool {
-	if e.expiration == nil || e.expiration.After(time.Now()) {
-		return false
+type CachingStrategy interface {
+	CleanupTick() time.Duration
+	IsExpired(*CachedElement) bool
+	IsCleanable(*CachedElement) bool
+	NewCachedElement(*CachedElement, interface{}, error) *CachedElement
+}
+
+type DefaultCachingStrategy struct {
+	expiration time.Duration
+	cleanup    time.Duration
+}
+
+func NewDefaultCachingStrategy(expiration time.Duration, cleanup time.Duration) *DefaultCachingStrategy {
+	return &DefaultCachingStrategy{expiration: expiration, cleanup: cleanup}
+}
+
+func (cs *DefaultCachingStrategy) CleanupTick() time.Duration {
+	return cs.cleanup
+}
+
+func (cs *DefaultCachingStrategy) IsExpired(e *CachedElement) bool {
+	if cs.expiration != 0 {
+		return time.Since(e.timestamp) >= cs.expiration
 	}
-	return true
+	return false
+}
+
+func (cs *DefaultCachingStrategy) IsCleanable(e *CachedElement) bool {
+	return cs.IsExpired(e)
+}
+
+func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, err error) *CachedElement {
+	return &CachedElement{value: v, error: err, timestamp: time.Now()}
 }
 
 type cacheGetterFunc func(interface{}) (interface{}, error)
@@ -29,7 +57,7 @@ type cacheGetterFunc func(interface{}) (interface{}, error)
 //
 // All goroutines will waits this result.
 type Cache struct {
-	cache      map[string]*cachedElement
+	cache      map[string]*CachedElement
 	cacheMutex sync.RWMutex
 
 	cacheQueue      map[string]chan bool
@@ -37,10 +65,14 @@ type Cache struct {
 
 	getter cacheGetterFunc
 
-	expiration time.Duration
+	strategy CachingStrategy
 }
 
 func (c *Cache) cleanup(interval time.Duration) {
+
+	if interval == 0 {
+		return
+	}
 
 	ticker := time.Tick(interval)
 
@@ -50,7 +82,7 @@ func (c *Cache) cleanup(interval time.Duration) {
 			// Do cleanup
 			c.cacheMutex.Lock()
 			for k, v := range c.cache {
-				if v.Expired() {
+				if c.strategy.IsCleanable(v) {
 					delete(c.cache, k)
 				}
 			}
@@ -63,18 +95,20 @@ func (c *Cache) cleanup(interval time.Duration) {
 // f will be called to fetch cache-missing data.
 // If expiration interval is non null, data will
 // be refreshed if too old.
-func NewCache(f cacheGetterFunc, expiration time.Duration, cleanup time.Duration) *Cache {
+func NewCache(f cacheGetterFunc, cs CachingStrategy) *Cache {
+
+	if cs == nil {
+		cs = NewDefaultCachingStrategy(0, 0)
+	}
 
 	c := Cache{
-		cache:      make(map[string]*cachedElement),
+		cache:      make(map[string]*CachedElement),
 		cacheQueue: make(map[string]chan bool),
 		getter:     f,
-		expiration: expiration,
+		strategy:   cs,
 	}
 
-	if cleanup != 0 {
-		go c.cleanup(cleanup)
-	}
+	go c.cleanup(cs.CleanupTick())
 
 	return &c
 }
@@ -85,12 +119,18 @@ func NewCache(f cacheGetterFunc, expiration time.Duration, cleanup time.Duration
 // the cache
 func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
+	// Keep track of previous cached version
+	var old *CachedElement
+
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
-	if v, ok := c.cache[key]; ok && v.error == nil && !v.Expired() {
-		// Result found in cache, return it
-		c.cacheMutex.RUnlock()
-		return v.value, nil
+	if v, ok := c.cache[key]; ok && v.error == nil {
+		if !c.strategy.IsExpired(v) {
+			// Result found in cache, return it
+			c.cacheMutex.RUnlock()
+			return v.value, nil
+		}
+		old = v
 	}
 
 	// Result was not found in cache, let see is someone
@@ -136,12 +176,14 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 	// Store result if callee said it's ok
 	c.cacheMutex.Lock()
-	e := cachedElement{value: result, error: err}
-	if c.expiration != 0 {
-		expi := time.Now().Add(c.expiration)
-		e.expiration = &expi
+	e := c.strategy.NewCachedElement(old, result, err)
+	// Protect against faulty strategy components
+	if e == nil {
+		e = &CachedElement{value: result, error: err, timestamp: time.Now()}
 	}
-	c.cache[key] = &e
+	result = e.value
+	err = e.error
+	c.cache[key] = e
 	c.cacheMutex.Unlock()
 
 	// Clean cacheQueue

@@ -13,7 +13,7 @@ func Test(t *testing.T) {
 		return v, nil
 	}
 
-	cache := NewCache(f, 200*time.Millisecond, 500*time.Millisecond)
+	cache := NewCache(f, NewDefaultCachingStrategy(200*time.Millisecond, 500*time.Millisecond))
 
 	var foo1, foo2, foo3, foo4, bar1, bar2, bar3, bar4 interface{}
 	var wg sync.WaitGroup
