@@ -7,7 +7,6 @@ import (
 
 type CachedElement struct {
 	Value     interface{}
-	Error     error
 	Timestamp time.Time
 }
 
@@ -15,7 +14,8 @@ type CachingStrategy interface {
 	CleanupTick() time.Duration
 	IsExpired(*CachedElement) bool
 	IsCleanable(*CachedElement) bool
-	NewCachedElement(*CachedElement, interface{}, error) *CachedElement
+	NewCachedElement(*CachedElement, interface{}, error) (*CachedElement, error)
+	ShouldPropagateError(error) bool
 }
 
 type DefaultCachingStrategy struct {
@@ -42,11 +42,25 @@ func (cs *DefaultCachingStrategy) IsCleanable(e *CachedElement) bool {
 	return cs.IsExpired(e)
 }
 
-func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, err error) *CachedElement {
-	return &CachedElement{Value: v, Error: err, Timestamp: time.Now()}
+func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, e error) (*CachedElement, error) {
+	return &CachedElement{Value: v, Timestamp: time.Now()}, e
+}
+
+func (cs *DefaultCachingStrategy) ShouldPropagateError(err error) bool {
+	return true
 }
 
 type cacheGetterFunc func(interface{}) (interface{}, error)
+
+type cacheQueueElementResult struct {
+	value interface{}
+	error error
+}
+
+type cacheQueueElement struct {
+	wait   chan struct{}
+	result *cacheQueueElementResult
+}
 
 // Cache implements a thread-safe cache where
 // getting the real data is expensive.
@@ -60,7 +74,7 @@ type Cache struct {
 	cache      map[string]*CachedElement
 	cacheMutex sync.RWMutex
 
-	cacheQueue      map[string]chan bool
+	cacheQueue      map[string]*cacheQueueElement
 	cacheQueueMutex sync.RWMutex
 
 	getter cacheGetterFunc
@@ -103,7 +117,7 @@ func NewCache(f cacheGetterFunc, cs CachingStrategy) *Cache {
 
 	c := Cache{
 		cache:      make(map[string]*CachedElement),
-		cacheQueue: make(map[string]chan bool),
+		cacheQueue: make(map[string]*cacheQueueElement),
 		getter:     f,
 		strategy:   cs,
 	}
@@ -124,7 +138,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
-	if v, ok := c.cache[key]; ok && v.Error == nil {
+	if v, ok := c.cache[key]; ok {
 		if !c.strategy.IsExpired(v) {
 			// Result found in cache, return it
 			c.cacheMutex.RUnlock()
@@ -142,16 +156,23 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	// its lock.
 	c.cacheQueueMutex.Lock()
 	c.cacheMutex.RUnlock()
-	if wait, ok := c.cacheQueue[key]; ok {
-		// Someone is already fetching this value, wait it's answer
-		c.cacheQueueMutex.Unlock()
-		<-wait
 
-		// Result should be in cache
-		c.cacheMutex.RLock()
-		v := c.cache[key]
-		c.cacheMutex.RUnlock()
-		return v.Value, v.Error
+	for {
+		if queue, ok := c.cacheQueue[key]; ok {
+			// Someone is already fetching this value, wait it's answer
+			c.cacheQueueMutex.Unlock()
+			<-queue.wait
+
+			// If found return it, else retry
+			if queue.result != nil {
+				return queue.result.value, queue.result.error
+			}
+
+			c.cacheQueueMutex.Lock()
+		} else {
+			// Nobody is already fetching this value, let's go
+			break
+		}
 	}
 
 	// Nobody is fetching this key, so we will insert
@@ -159,8 +180,8 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	// is made by a simple chan, as a read in a chan
 	// is a blocking operation, unblocked when the chan
 	// is closed.
-	wait := make(chan bool)
-	c.cacheQueue[key] = wait
+	queue := &cacheQueueElement{wait: make(chan struct{})}
+	c.cacheQueue[key] = queue
 	c.cacheQueueMutex.Unlock()
 
 	// Do Real Call which may be time consuming
@@ -174,17 +195,24 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 		return c.getter(in)
 	}(data)
 
-	// Store result if callee said it's ok
-	c.cacheMutex.Lock()
-	e := c.strategy.NewCachedElement(old, result, err)
+	e, err := c.strategy.NewCachedElement(old, result, err)
 	// Protect against faulty strategy components
 	if e == nil {
-		e = &CachedElement{Value: result, Error: err, Timestamp: time.Now()}
+		e = &CachedElement{Value: result, Timestamp: time.Now()}
 	}
 	result = e.Value
-	err = e.Error
-	c.cache[key] = e
-	c.cacheMutex.Unlock()
+
+	// Store result if callee said it's ok
+	if err == nil {
+		c.cacheMutex.Lock()
+		c.cache[key] = e
+		c.cacheMutex.Unlock()
+	}
+
+	// Propagate result
+	if err == nil || c.strategy.ShouldPropagateError(err) {
+		queue.result = &cacheQueueElementResult{result, err}
+	}
 
 	// Clean cacheQueue
 	c.cacheQueueMutex.Lock()
@@ -192,7 +220,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	c.cacheQueueMutex.Unlock()
 
 	// Unlock waiters by closing the chan
-	close(wait)
+	close(queue.wait)
 
 	// Return result
 	return result, err
