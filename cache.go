@@ -14,7 +14,7 @@ type CachingStrategy interface {
 	CleanupTick() time.Duration
 	IsExpired(*CachedElement) bool
 	IsCleanable(*CachedElement) bool
-	NewCachedElement(*CachedElement, interface{}, error) *CachedElement
+	NewCachedElement(*CachedElement, interface{}, error) (*CachedElement, error)
 	ShouldPropagateError(error) bool
 }
 
@@ -42,8 +42,8 @@ func (cs *DefaultCachingStrategy) IsCleanable(e *CachedElement) bool {
 	return cs.IsExpired(e)
 }
 
-func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, e error) *CachedElement {
-	return &CachedElement{Value: v, Timestamp: time.Now()}
+func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, e error) (*CachedElement, error) {
+	return &CachedElement{Value: v, Timestamp: time.Now()}, e
 }
 
 func (cs *DefaultCachingStrategy) ShouldPropagateError(err error) bool {
@@ -195,15 +195,15 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 		return c.getter(in)
 	}(data)
 
+	e, err := c.strategy.NewCachedElement(old, result, err)
+	// Protect against faulty strategy components
+	if e == nil {
+		e = &CachedElement{Value: result, Timestamp: time.Now()}
+	}
+	result = e.Value
+
 	// Store result if callee said it's ok
 	if err == nil {
-		e := c.strategy.NewCachedElement(old, result, err)
-		// Protect against faulty strategy components
-		if e == nil {
-			e = &CachedElement{Value: result, Timestamp: time.Now()}
-		}
-		result = e.Value
-
 		c.cacheMutex.Lock()
 		c.cache[key] = e
 		c.cacheMutex.Unlock()
