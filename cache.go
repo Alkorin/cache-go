@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -188,7 +190,11 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	result, err := func(in interface{}) (out interface{}, err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				err = r.(error)
+				errRecover, ok := r.(error)
+				if !ok {
+					errRecover = errors.New(fmt.Sprint(r))
+				}
+				err = errRecover
 			}
 		}()
 
