@@ -24,3 +24,17 @@ func WithTimeout(f cacheGetterFunc, t time.Duration, err error) cacheGetterFunc 
 		return nil, err
 	}
 }
+
+func WithRetry(f cacheGetterFunc, n int) cacheGetterFunc {
+	return func(v interface{}) (interface{}, error) {
+		var lastError error
+		for i := 0; i < n; i++ {
+			r, e := f(v)
+			if e == nil {
+				return r, e
+			}
+			lastError = e
+		}
+		return nil, lastError
+	}
+}

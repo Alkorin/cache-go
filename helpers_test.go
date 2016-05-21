@@ -26,3 +26,28 @@ func TestTimeout(t *testing.T) {
 		t.Fatalf("Should have returned nil, 'timed out'; received: %v, %v", v, e)
 	}
 }
+
+func TestRetry(t *testing.T) {
+	nbCalled := 0
+	// Func which returns OK only at the second call
+	f := func(v interface{}) (interface{}, error) {
+		nbCalled++
+		if nbCalled == 2 {
+			return "OK", nil
+		}
+		return nil, errors.New("not second")
+	}
+
+	// Try to call func 3 times
+	f = WithRetry(f, 3)
+
+	// First try, should call the function 2 times and return success
+	if v, e := f(nil); nbCalled != 2 || v.(string) != "OK" || e != nil {
+		t.Fatalf("Should have returned 2, OK, nil; received: %v, %v, %v", nbCalled, v, e)
+	}
+
+	// Second try, should call the function 3 times and return error
+	if v, e := f(nil); nbCalled != 5 || v != nil || e == nil || e.Error() != "not second" {
+		t.Fatalf("Should have returned 5, nil, 'not second'; received: %v, %v, %v", nbCalled, v, e)
+	}
+}
