@@ -73,3 +73,51 @@ func Test(t *testing.T) {
 	}
 
 }
+
+func TestError(t *testing.T) {
+
+	errStr := "test recover"
+
+	var nbHit int64
+
+	f := func(v interface{}) (interface{}, error) {
+		if atomic.LoadInt64(&nbHit) == 0 {
+			atomic.AddInt64(&nbHit, 1)
+			panic(errStr)
+		}
+		time.Sleep(100 * time.Millisecond)
+		atomic.AddInt64(&nbHit, 1)
+		return v, nil
+	}
+
+	cache := NewCache(f, nil)
+
+	var foo1, foo2, foo3 interface{}
+	var err error
+	var wg sync.WaitGroup
+
+	// 3 sequential gets
+	// first should error
+	// 2nd & 3rd should be queued and auto-retry
+	wg.Add(3)
+	go func() { foo1, err = cache.Get("foo", "Cached-foo1"); wg.Done() }()
+	time.Sleep(10 * time.Millisecond)
+	go func() { foo2, _ = cache.Get("foo", "Cached-foo2"); wg.Done() }()
+	time.Sleep(10 * time.Millisecond)
+	go func() { foo3, _ = cache.Get("foo", "Cached-foo3"); wg.Done() }()
+	wg.Wait()
+
+	if err == nil {
+		t.Errorf("foo1 should have produced an error, got nil, foo1=%v", foo1)
+	} else if err.Error() != errStr {
+		t.Errorf("foo1 error message is not consistent, expected '%s' got '%s'", errStr, err.Error())
+	}
+
+	if nbHit != 2 {
+		t.Errorf("Should have 2 hits on cache getter func after foo3, got %d", nbHit)
+	}
+
+	if foo2 != foo3 {
+		t.Errorf("foo3 got an invalid value: foo2=%q, foo3=%q", foo2, foo3)
+	}
+}
