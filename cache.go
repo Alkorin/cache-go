@@ -191,3 +191,13 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	// Return result
 	return result, err
 }
+
+func (c *Cache) Delete(key string) bool {
+	c.cacheMutex.Lock()
+	_, ok := c.cache[key]
+	if ok {
+		delete(c.cache, key)
+	}
+	c.cacheMutex.Unlock()
+	return ok
+}
