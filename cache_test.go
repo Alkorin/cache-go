@@ -121,3 +121,34 @@ func TestError(t *testing.T) {
 		t.Errorf("foo3 got an invalid value: foo2=%q, foo3=%q", foo2, foo3)
 	}
 }
+
+func TestSet(t *testing.T) {
+
+	key := "foo"
+	normalFlow := "normal"
+	forceSet := "forceset"
+
+	f := func(v interface{}) (interface{}, error) {
+		return normalFlow, nil
+	}
+
+	cache := NewCache(f, nil)
+
+	c1, err := cache.Get(key, key)
+	if err != nil {
+		t.Error(err)
+	}
+	if c1 != normalFlow {
+		t.Errorf("Expected '%s', got '%s'", normalFlow, c1)
+	}
+
+	cache.Set(key, forceSet)
+
+	c2, err := cache.Get(key, key)
+	if err != nil {
+		t.Error(err)
+	}
+	if c2 != forceSet {
+		t.Errorf("Expected '%s', got '%s'", forceSet, c2)
+	}
+}
