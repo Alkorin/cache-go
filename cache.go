@@ -192,6 +192,8 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	return result, err
 }
 
+// Delete removes the data stored under a given key from the cache.
+// Returns a bool indicating whether any data was actually deleted.
 func (c *Cache) Delete(key string) bool {
 	c.cacheMutex.Lock()
 	_, ok := c.cache[key]
@@ -200,4 +202,13 @@ func (c *Cache) Delete(key string) bool {
 	}
 	c.cacheMutex.Unlock()
 	return ok
+}
+
+// Set forces the data stored under a given key.
+// If that key is being fetched through the normal workflow concurrently,
+// your data may get overwritten.
+func (c *Cache) Set(key string, i interface{}) {
+	c.cacheMutex.Lock()
+	c.cache[key] = &CachedElement{Value: i, Timestamp: time.Now()}
+	c.cacheMutex.Unlock()
 }
