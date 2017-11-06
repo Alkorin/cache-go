@@ -39,6 +39,10 @@ func Test(t *testing.T) {
 	if nbHit != 2 { // foo1, bar1
 		t.Errorf("Should have 2 hits on cache getter func after foo1/bar1, got %d", nbHit)
 	}
+	cacheLen := cache.Len()
+	if cacheLen != 2 {
+		t.Errorf("expected cache length to be 2, got %d", cacheLen)
+	}
 
 	time.Sleep(1 * time.Second) // Sleep to force expiration
 	// Concurrent get (cache queue)
@@ -71,7 +75,12 @@ func Test(t *testing.T) {
 	if nbHit != 4 { // foo1, bar1, foo3, foo5
 		t.Errorf("Should have 4 hits on cache getter func after foo5, got %d", nbHit)
 	}
+	time.Sleep(1 * time.Second)
 
+	cacheLen = cache.Len()
+	if cacheLen != 0 {
+		t.Errorf("expected cache length to be 0, got %d", cacheLen)
+	}
 }
 
 func TestError(t *testing.T) {
@@ -150,5 +159,10 @@ func TestSet(t *testing.T) {
 	}
 	if c2 != forceSet {
 		t.Errorf("Expected '%s', got '%s'", forceSet, c2)
+	}
+
+	cacheLen := cache.Len()
+	if cacheLen != 1 {
+		t.Errorf("expected cache length to be 1, got %d", cacheLen)
 	}
 }

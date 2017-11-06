@@ -212,3 +212,11 @@ func (c *Cache) Set(key string, i interface{}) {
 	c.cache[key] = &CachedElement{Value: i, Timestamp: time.Now()}
 	c.cacheMutex.Unlock()
 }
+
+// Len returns the length of the cache.
+func (c *Cache) Len() int {
+	c.cacheMutex.RLock()
+	defer c.cacheMutex.RUnlock()
+
+	return len(c.cache)
+}
