@@ -7,21 +7,21 @@ import (
 	"time"
 )
 
-type CachedElement struct {
-	Value     interface{}
+type CachedElement[ResultType any] struct {
+	Value     ResultType
 	Timestamp time.Time
 }
 
-type cacheGetterFunc func(interface{}) (interface{}, error)
+type cacheGetterFunc[ParamsType, ResultType any] func(ParamsType) (ResultType, error)
 
-type cacheQueueElementResult struct {
-	value interface{}
+type cacheQueueElementResult[ResultType any] struct {
+	value ResultType
 	error error
 }
 
-type cacheQueueElement struct {
+type cacheQueueElement[ResultType any] struct {
 	wait   chan struct{}
-	result *cacheQueueElementResult
+	result *cacheQueueElementResult[ResultType]
 }
 
 // Cache implements a thread-safe cache where
@@ -32,19 +32,19 @@ type cacheQueueElement struct {
 // getter sub will only be called once.
 //
 // All goroutines will waits this result.
-type Cache struct {
-	cache      map[string]*CachedElement
+type Cache[ParamsType, ResultType any] struct {
+	cache      map[string]*CachedElement[ResultType]
 	cacheMutex sync.RWMutex
 
-	cacheQueue      map[string]*cacheQueueElement
+	cacheQueue      map[string]*cacheQueueElement[ResultType]
 	cacheQueueMutex sync.RWMutex
 
-	getter cacheGetterFunc
+	getter cacheGetterFunc[ParamsType, ResultType]
 
-	strategy CachingStrategy
+	strategy CachingStrategy[ResultType]
 }
 
-func (c *Cache) cleanup(interval time.Duration) {
+func (c *Cache[ParamsType, ResultType]) cleanup(interval time.Duration) {
 
 	if interval == 0 {
 		return
@@ -71,15 +71,15 @@ func (c *Cache) cleanup(interval time.Duration) {
 // f will be called to fetch cache-missing data.
 // If expiration interval is non null, data will
 // be refreshed if too old.
-func NewCache(f cacheGetterFunc, cs CachingStrategy) *Cache {
+func NewCache[ParamsType, ResultType any](f cacheGetterFunc[ParamsType, ResultType], cs CachingStrategy[ResultType]) *Cache[ParamsType, ResultType] {
 
 	if cs == nil {
-		cs = NewDefaultCachingStrategy(0, 0)
+		cs = NewDefaultCachingStrategy[ResultType](0, 0)
 	}
 
-	c := Cache{
-		cache:      make(map[string]*CachedElement),
-		cacheQueue: make(map[string]*cacheQueueElement),
+	c := Cache[ParamsType, ResultType]{
+		cache:      make(map[string]*CachedElement[ResultType]),
+		cacheQueue: make(map[string]*cacheQueueElement[ResultType]),
 		getter:     f,
 		strategy:   cs,
 	}
@@ -93,10 +93,10 @@ func NewCache(f cacheGetterFunc, cs CachingStrategy) *Cache {
 // to the key 'key'. If data is missing in cache, the
 // getter will be called to obtain it and store it in
 // the cache
-func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
+func (c *Cache[ParamsType, ResultType]) Get(key string, data ParamsType) (ResultType, error) {
 
 	// Keep track of previous cached version
-	var old *CachedElement
+	var old *CachedElement[ResultType]
 
 	// First try to see if result is already in cache
 	c.cacheMutex.RLock()
@@ -142,12 +142,12 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	// is made by a simple chan, as a read in a chan
 	// is a blocking operation, unblocked when the chan
 	// is closed.
-	queue := &cacheQueueElement{wait: make(chan struct{})}
+	queue := &cacheQueueElement[ResultType]{wait: make(chan struct{})}
 	c.cacheQueue[key] = queue
 	c.cacheQueueMutex.Unlock()
 
 	// Do Real Call which may be time consuming
-	result, err := func(in interface{}) (out interface{}, err error) {
+	result, err := func(in ParamsType) (out ResultType, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				errRecover, ok := r.(error)
@@ -164,7 +164,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 	e, err := c.strategy.NewCachedElement(old, result, err)
 	// Protect against faulty strategy components
 	if e == nil {
-		e = &CachedElement{Value: result, Timestamp: time.Now()}
+		e = &CachedElement[ResultType]{Value: result, Timestamp: time.Now()}
 	}
 	result = e.Value
 
@@ -177,7 +177,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 	// Propagate result
 	if err == nil || c.strategy.ShouldPropagateError(err) {
-		queue.result = &cacheQueueElementResult{result, err}
+		queue.result = &cacheQueueElementResult[ResultType]{result, err}
 	}
 
 	// Clean cacheQueue
@@ -194,7 +194,7 @@ func (c *Cache) Get(key string, data interface{}) (interface{}, error) {
 
 // Delete removes the data stored under a given key from the cache.
 // Returns a bool indicating whether any data was actually deleted.
-func (c *Cache) Delete(key string) bool {
+func (c *Cache[ParamsType, ResultType]) Delete(key string) bool {
 	c.cacheMutex.Lock()
 	_, ok := c.cache[key]
 	if ok {
@@ -207,14 +207,14 @@ func (c *Cache) Delete(key string) bool {
 // Set forces the data stored under a given key.
 // If that key is being fetched through the normal workflow concurrently,
 // your data may get overwritten.
-func (c *Cache) Set(key string, i interface{}) {
+func (c *Cache[ParamsType, ResultType]) Set(key string, i ResultType) {
 	c.cacheMutex.Lock()
-	c.cache[key] = &CachedElement{Value: i, Timestamp: time.Now()}
+	c.cache[key] = &CachedElement[ResultType]{Value: i, Timestamp: time.Now()}
 	c.cacheMutex.Unlock()
 }
 
 // Len returns the length of the cache.
-func (c *Cache) Len() int {
+func (c *Cache[ParamsType, ResultType]) Len() int {
 	c.cacheMutex.RLock()
 	defer c.cacheMutex.RUnlock()
 

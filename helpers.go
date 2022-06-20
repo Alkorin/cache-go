@@ -4,29 +4,30 @@ import (
 	"time"
 )
 
-type timeOutResult struct {
-	r interface{}
+type timeOutResult[ResultType any] struct {
+	r ResultType
 	e error
 }
 
-func WithTimeout(f cacheGetterFunc, t time.Duration, err error) cacheGetterFunc {
-	return func(v interface{}) (interface{}, error) {
-		c := make(chan timeOutResult)
+func WithTimeout[ParamsType, ResultType any](f cacheGetterFunc[ParamsType, ResultType], t time.Duration, err error) cacheGetterFunc[ParamsType, ResultType] {
+	return func(v ParamsType) (ResultType, error) {
+		c := make(chan timeOutResult[ResultType])
 		go func() {
 			r, e := f(v)
-			c <- timeOutResult{r, e}
+			c <- timeOutResult[ResultType]{r, e}
 		}()
 		select {
 		case r := <-c:
 			return r.r, r.e
 		case <-time.After(t):
 		}
-		return nil, err
+		var zero ResultType
+		return zero, err
 	}
 }
 
-func WithRetry(f cacheGetterFunc, n int) cacheGetterFunc {
-	return func(v interface{}) (interface{}, error) {
+func WithRetry[ParamsType, ResultType any](f cacheGetterFunc[ParamsType, ResultType], n int) cacheGetterFunc[ParamsType, ResultType] {
+	return func(v ParamsType) (ResultType, error) {
 		var lastError error
 		for i := 0; i < n; i++ {
 			r, e := f(v)
@@ -35,6 +36,7 @@ func WithRetry(f cacheGetterFunc, n int) cacheGetterFunc {
 			}
 			lastError = e
 		}
-		return nil, lastError
+		var zero ResultType
+		return zero, lastError
 	}
 }
