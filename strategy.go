@@ -4,42 +4,42 @@ import (
 	"time"
 )
 
-type CachingStrategy interface {
+type CachingStrategy[T any] interface {
 	CleanupTick() time.Duration
-	IsExpired(*CachedElement) bool
-	IsCleanable(*CachedElement) bool
-	NewCachedElement(*CachedElement, interface{}, error) (*CachedElement, error)
+	IsExpired(*CachedElement[T]) bool
+	IsCleanable(*CachedElement[T]) bool
+	NewCachedElement(*CachedElement[T], T, error) (*CachedElement[T], error)
 	ShouldPropagateError(error) bool
 }
 
-type DefaultCachingStrategy struct {
+type DefaultCachingStrategy[T any] struct {
 	expiration time.Duration
 	cleanup    time.Duration
 }
 
-func NewDefaultCachingStrategy(expiration time.Duration, cleanup time.Duration) *DefaultCachingStrategy {
-	return &DefaultCachingStrategy{expiration: expiration, cleanup: cleanup}
+func NewDefaultCachingStrategy[T any](expiration time.Duration, cleanup time.Duration) *DefaultCachingStrategy[T] {
+	return &DefaultCachingStrategy[T]{expiration: expiration, cleanup: cleanup}
 }
 
-func (cs *DefaultCachingStrategy) CleanupTick() time.Duration {
+func (cs *DefaultCachingStrategy[T]) CleanupTick() time.Duration {
 	return cs.cleanup
 }
 
-func (cs *DefaultCachingStrategy) IsExpired(e *CachedElement) bool {
+func (cs *DefaultCachingStrategy[T]) IsExpired(e *CachedElement[T]) bool {
 	if cs.expiration != 0 {
 		return time.Since(e.Timestamp) >= cs.expiration
 	}
 	return false
 }
 
-func (cs *DefaultCachingStrategy) IsCleanable(e *CachedElement) bool {
+func (cs *DefaultCachingStrategy[T]) IsCleanable(e *CachedElement[T]) bool {
 	return cs.IsExpired(e)
 }
 
-func (cs *DefaultCachingStrategy) NewCachedElement(old *CachedElement, v interface{}, e error) (*CachedElement, error) {
-	return &CachedElement{Value: v, Timestamp: time.Now()}, e
+func (cs *DefaultCachingStrategy[T]) NewCachedElement(old *CachedElement[T], v T, e error) (*CachedElement[T], error) {
+	return &CachedElement[T]{Value: v, Timestamp: time.Now()}, e
 }
 
-func (cs *DefaultCachingStrategy) ShouldPropagateError(err error) bool {
+func (cs *DefaultCachingStrategy[T]) ShouldPropagateError(err error) bool {
 	return true
 }
