@@ -11,15 +11,15 @@ func Test(t *testing.T) {
 
 	nbHit := int64(0)
 
-	f := func(v interface{}) (interface{}, error) {
+	f := func(v string) (string, error) {
 		time.Sleep(100 * time.Millisecond)
 		atomic.AddInt64(&nbHit, int64(1))
 		return v, nil
 	}
 
-	cache := NewCache(f, NewDefaultCachingStrategy(200*time.Millisecond, 500*time.Millisecond))
+	cache := NewCache(f, NewDefaultCachingStrategy[string](200*time.Millisecond, 500*time.Millisecond))
 
-	var foo1, foo2, foo3, foo4, foo5, bar1, bar2 interface{}
+	var foo1, foo2, foo3, foo4, foo5, bar1, bar2 string
 	var wg sync.WaitGroup
 
 	// Sequential get before expiration
@@ -89,7 +89,7 @@ func TestError(t *testing.T) {
 
 	var nbHit int64
 
-	f := func(v interface{}) (interface{}, error) {
+	f := func(v string) (string, error) {
 		if atomic.LoadInt64(&nbHit) == 0 {
 			atomic.AddInt64(&nbHit, 1)
 			panic(errStr)
@@ -101,7 +101,7 @@ func TestError(t *testing.T) {
 
 	cache := NewCache(f, nil)
 
-	var foo1, foo2, foo3 interface{}
+	var foo1, foo2, foo3 string
 	var err error
 	var wg sync.WaitGroup
 
@@ -137,7 +137,7 @@ func TestSet(t *testing.T) {
 	normalFlow := "normal"
 	forceSet := "forceset"
 
-	f := func(v interface{}) (interface{}, error) {
+	f := func(v string) (string, error) {
 		return normalFlow, nil
 	}
 
@@ -164,5 +164,30 @@ func TestSet(t *testing.T) {
 	cacheLen := cache.Len()
 	if cacheLen != 1 {
 		t.Errorf("expected cache length to be 1, got %d", cacheLen)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	f := func(v string) (string, error) {
+		return "result", nil
+	}
+
+	cache := NewCache(f, nil)
+
+	_, err := cache.Get("test", "test")
+	if err != nil {
+		t.Error(err)
+	}
+
+	cacheLen := cache.Len()
+	if cacheLen != 1 {
+		t.Errorf("expected cache length to be 1, got %d", cacheLen)
+	}
+
+	cache.DeleteAll()
+
+	cacheLen = cache.Len()
+	if cacheLen != 0 {
+		t.Errorf("expected cache length to be 0, got %d", cacheLen)
 	}
 }
