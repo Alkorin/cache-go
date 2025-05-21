@@ -204,6 +204,13 @@ func (c *Cache[ParamsType, ResultType]) Delete(key string) bool {
 	return ok
 }
 
+// DeleteAll removes all the data stored.
+func (c *Cache[ParamsType, ResultType]) DeleteAll() {
+	c.cacheMutex.Lock()
+	clear(c.cache)
+	c.cacheMutex.Unlock()
+}
+
 // Set forces the data stored under a given key.
 // If that key is being fetched through the normal workflow concurrently,
 // your data may get overwritten.
